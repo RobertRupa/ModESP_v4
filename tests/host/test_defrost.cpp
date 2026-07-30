@@ -49,7 +49,10 @@
  *   8. Skip optimization: if termination=0 and sensor2_ok and T_evap > end_temp
  *      at timer trigger time -> skip defrost (evap is clean).
  *
- *   9. Protection lockout aborts any active defrost phase immediately.
+ *   9. Protection lockout aborts any active defrost phase immediately, and
+ *      blocks NEW cycle initiation in IDLE (triggers and manual_start).
+ *      The interval timer keeps counting during lockout, so an overdue
+ *      defrost fires right after the lockout clears.
  *
  *  10. interval_timer_ms_ restored from SharedState on init via
  *      read_int("defrost.interval_timer") * 1000.
@@ -773,4 +776,98 @@ TEST_CASE("Defrost: initiation=3 disabled -- never auto-starts [defrost]") {
                   "With initiation=3 (disabled), defrost must never auto-start");
     CHECK_MESSAGE(df_get_str(state, "defrost.phase") == "idle",
                   "Phase must remain IDLE with initiation disabled");
+}
+
+// -----------------------------------------------------------------------------
+// TEST 17: Lockout blocks new cycle initiation in IDLE (no one-tick blip)
+// -----------------------------------------------------------------------------
+// Regression: before the fix, update_idle kept evaluating triggers/manual_start
+// under protection.lockout. The started cycle was aborted on the NEXT tick by
+// the lockout check, but the one-tick defrost.active blip forced the thermostat
+// through pause + end-reset (state -> IDLE, comp timers cleared), and
+// start_defrost() reset interval_timer to 0 — postponing the defrost by a full
+// interval on every attempt for as long as the lockout lasted.
+
+TEST_CASE("Defrost: lockout blocks new cycle initiation in IDLE [defrost]") {
+    modesp::SharedState state;
+    DefrostModule defrost;
+    modesp::ModuleManager mgr;
+    mgr.register_module(defrost);
+
+    // interval_timer preloaded BEFORE init_all (restored in on_init):
+    // 3599s of a 1h interval -> a 1001ms tick crosses the threshold.
+    state.set("defrost.interval_timer", static_cast<int32_t>(3599));
+    state.set("defrost.interval",       static_cast<int32_t>(1));    // 1h
+    state.set("defrost.initiation",     static_cast<int32_t>(0));    // timer
+    state.set("defrost.termination",    static_cast<int32_t>(1));    // by timer
+
+    mgr.init_all(state);
+
+    df_setup_inputs(state, 0.0f, false, false, /*lockout=*/true);
+    state.set("defrost.type", static_cast<int32_t>(0));  // natural
+
+    SUBCASE("timer trigger due under lockout -- no start, not even a blip") {
+        defrost.on_update(1001u);  // crosses 1h threshold under lockout
+
+        CHECK_MESSAGE(df_get_bool(state, "defrost.active") == false,
+                      "No defrost.active blip may appear under lockout");
+        CHECK_MESSAGE(df_get_str(state, "defrost.phase") == "idle",
+                      "Phase must remain IDLE under lockout");
+        // interval_timer NOT reset by an aborted start: elapsed >= interval,
+        // so published remaining time must be 0 (bug: full 3600s again).
+        CHECK_MESSAGE(df_get_int(state, "defrost.interval_timer") == 0,
+                      "interval_timer must not be reset while lockout holds");
+
+        // Stays quiet for as long as the lockout lasts
+        defrost.on_update(60000u);
+        defrost.on_update(60000u);
+        CHECK(df_get_bool(state, "defrost.active") == false);
+        CHECK(df_get_str(state, "defrost.phase") == "idle");
+    }
+
+    SUBCASE("interval timer keeps counting -- overdue defrost fires right after release") {
+        defrost.on_update(1001u);  // threshold crossed DURING lockout
+        REQUIRE(df_get_bool(state, "defrost.active") == false);
+
+        state.set("protection.lockout", false);
+        defrost.on_update(100u);   // first tick after release
+
+        CHECK_MESSAGE(df_get_bool(state, "defrost.active") == true,
+                      "Overdue defrost must start immediately after lockout clears");
+        CHECK_MESSAGE(df_get_str(state, "defrost.phase") == "active",
+                      "Natural defrost goes straight to ACTIVE");
+    }
+
+    SUBCASE("manual_start under lockout is dropped, not latched") {
+        state.set("defrost.manual_start", true);
+        defrost.on_update(100u);  // 3599.1s < 3600s -- timer not due yet
+
+        CHECK_MESSAGE(df_get_bool(state, "defrost.active") == false,
+                      "manual_start must not start a cycle under lockout");
+        CHECK_MESSAGE(df_get_bool(state, "defrost.manual_start") == false,
+                      "manual_start must be consumed (dropped) under lockout");
+
+        // After release the dropped trigger must NOT fire (no latch, HIGH#2 logic)
+        state.set("protection.lockout", false);
+        defrost.on_update(100u);  // 3599.2s -- still below timer threshold
+        CHECK_MESSAGE(df_get_bool(state, "defrost.active") == false,
+                      "Dropped manual_start must not fire after lockout clears");
+    }
+
+    SUBCASE("demand trigger under lockout is blocked too") {
+        state.set("defrost.initiation",  static_cast<int32_t>(1));   // demand only
+        state.set("defrost.demand_temp", -20.0f);
+        state.set("equipment.evap_temp",  -25.0f);  // below demand threshold
+        state.set("equipment.sensor2_ok", true);
+        // interval_timer 3599s > interval/4 = 900s -- minimum-spacing guard passed
+
+        defrost.on_update(100u);
+        CHECK_MESSAGE(df_get_bool(state, "defrost.active") == false,
+                      "Demand trigger must not start a cycle under lockout");
+
+        state.set("protection.lockout", false);
+        defrost.on_update(100u);
+        CHECK_MESSAGE(df_get_bool(state, "defrost.active") == true,
+                      "Demand defrost must start right after lockout clears");
+    }
 }

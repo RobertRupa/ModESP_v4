@@ -69,7 +69,7 @@ private:
     const char* phase_name() const;
 
     // Initiation logic
-    void update_idle(uint32_t dt_ms);
+    void update_idle(uint32_t dt_ms, bool lockout);
     bool check_timer_trigger();
     bool check_demand_trigger();
     void start_defrost(const char* reason);

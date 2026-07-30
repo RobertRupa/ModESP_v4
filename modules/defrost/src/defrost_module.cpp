@@ -276,7 +276,7 @@ void DefrostModule::on_update(uint32_t dt_ms) {
     // Phase dispatch
     switch (phase_) {
         case Phase::IDLE:
-            update_idle(dt_ms);
+            update_idle(dt_ms, lockout);
             break;
         case Phase::STABILIZE:
             update_stabilize(dt_ms);
@@ -305,7 +305,19 @@ void DefrostModule::on_update(uint32_t dt_ms) {
 // IDLE — перевірка ініціації
 // ═══════════════════════════════════════════════════════════════
 
-void DefrostModule::update_idle(uint32_t dt_ms) {
+void DefrostModule::update_idle(uint32_t dt_ms, bool lockout) {
+    // Під protection.lockout нові цикли не стартують: старт був би абортований
+    // уже наступним тіком (див. on_update), встигнувши дати одно-тіковий бліп
+    // defrost.active (термостат робить pause + end-reset) і скинути
+    // interval_timer у 0 — відтайка відкладалася б на повний інтервал при
+    // кожній спробі. Інтервальний таймер нижче продовжує рахувати, тож
+    // прострочена відтайка стартує одразу після зняття lockout.
+    if (lockout && read_bool("defrost.manual_start")) {
+        // Дропаємо (не відкладаємо) — інакше залатчиться і дасть неочікуваний
+        // старт після зняття lockout (та сама логіка, що HIGH#2)
+        state_set("defrost.manual_start", false);
+    }
+
     // Ручний запуск
     if (read_bool("defrost.manual_start")) {
         state_set("defrost.manual_start", false);
@@ -326,6 +338,9 @@ void DefrostModule::update_idle(uint32_t dt_ms) {
             interval_timer_ms_ += dt_ms;
         }
     }
+
+    // Під lockout таймер порахований, але тригери не перевіряємо
+    if (lockout) return;
 
     // Перевіряємо triggers
     bool timer_trigger  = (initiation_ == 0 || initiation_ == 2) && check_timer_trigger();
