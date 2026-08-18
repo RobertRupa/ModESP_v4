@@ -111,12 +111,13 @@ private:
         float    evap_at_start   = 0.0f;   // evap_temp при старті (для pulldown)
 
         static constexpr size_t MAX_STARTS = 30;
-        uint32_t start_timestamps[MAX_STARTS] = {};
+        uint64_t start_timestamps[MAX_STARTS] = {};
         uint8_t  start_head      = 0;
         uint8_t  start_count     = 0;
         uint8_t  short_cycle_count = 0;
         uint32_t total_on_1h_ms  = 0;
-        uint32_t window_ms       = 0;
+        uint32_t window_ms       = 0;   // насичується на 1 год — лише для duty-cycle
+        uint64_t now_ms          = 0;   // монотонний uptime — для timestamps запусків
     };
 
     // ── Трекер швидкості зміни температури ──

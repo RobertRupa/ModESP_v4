@@ -747,6 +747,48 @@ TEST_CASE("Protection: rapid cycle alarm with too many starts [compressor]") {
 }
 
 // -----------------------------------------------------------------------------
+// TEST 14b: No rapid cycle false alarm after hours of normal cycling
+// (регресія: window_ms насичувався на 1 год, cutoff ставав 0, і лічилися
+//  ВСІ запуски з моменту старту — false alarm після >12 сумарних запусків)
+// -----------------------------------------------------------------------------
+
+TEST_CASE("Protection: no rapid cycle false alarm after hours of normal cycling [compressor]") {
+    modesp::SharedState state;
+    ProtectionModule prot;
+    modesp::ModuleManager mgr;
+    mgr.register_module(prot);
+    mgr.init_all(state);
+
+    // max_starts_hour = 12, min_compressor_run = 120 sec
+    pr_setup_compressor_settings(state, 120, 12);
+    pr_setup_normal(state, 5.0f, true, true, false, false, false);
+
+    // 8 годин нормального циклювання: ON 10 хв / OFF 20 хв = 2 запуски/год,
+    // 16 запусків сумарно (>12), але ніколи >12 у ковзному вікні 1 год
+    for (int i = 0; i < 16; i++) {
+        state.set("equipment.compressor", true);
+        prot.on_update(600000u);   // 10 хв ON
+        state.set("equipment.compressor", false);
+        prot.on_update(1200000u);  // 20 хв OFF
+    }
+
+    CHECK_MESSAGE(pr_get_bool(state, "protection.rapid_cycle_alarm") == false,
+                  "Rapid cycle alarm must NOT fire: 16 total starts but only 2/hr");
+
+    SUBCASE("genuine rapid cycling still detected late in uptime") {
+        for (int i = 0; i < 13; i++) {
+            state.set("equipment.compressor", true);
+            prot.on_update(180000u);  // 3 хв ON
+            state.set("equipment.compressor", false);
+            prot.on_update(10000u);   // 10 сек OFF
+        }
+
+        CHECK_MESSAGE(pr_get_bool(state, "protection.rapid_cycle_alarm") == true,
+                      "Rapid cycle alarm must still fire for a real burst after hours of uptime");
+    }
+}
+
+// -----------------------------------------------------------------------------
 // TEST 15: Continuous run alarm after max_continuous_run
 // -----------------------------------------------------------------------------
 

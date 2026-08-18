@@ -86,12 +86,14 @@ EWMA (Exponential Weighted Moving Average) з lambda=0.3 згладжує мит
 ## CompressorTracker
 
 ```
-Ring buffer: uint32_t start_timestamps[30]
+Ring buffer: uint64_t start_timestamps[30]
              head → circular write
              count → actual entries
+             timestamps = comp_.now_ms (монотонний uptime, не насичується;
+             window_ms насичується на 1 год і використовується лише для duty%)
 
 На кожен ON edge:
-  1. Записати timestamp (esp_timer_get_time / 1000)
+  1. Записати timestamp (comp_.now_ms)
   2. Перевірити short cycle (last_run < min_compressor_run)
   3. Підрахувати starts в 1h window
 

@@ -403,7 +403,10 @@ void ProtectionModule::update_door_alarm(bool door_open, uint32_t dt_ms) {
 
 void ProtectionModule::update_compressor_tracker(bool compressor_on, float temp,
                                                    bool defrost_active, uint32_t dt_ms) {
-    // --- Ковзне вікно 1 годину ---
+    // --- Монотонний годинник для timestamps запусків (справжнє ковзне вікно) ---
+    comp_.now_ms += dt_ms;
+
+    // --- Насичуване вікно 1 год — лише для duty-cycle апроксимації ---
     comp_.window_ms += dt_ms;
     if (comp_.window_ms > 3600000) {
         // Обрізаємо total_on пропорційно до вікна
@@ -433,7 +436,7 @@ void ProtectionModule::update_compressor_tracker(bool compressor_on, float temp,
         }
 
         // Записуємо timestamp в ring buffer
-        comp_.start_timestamps[comp_.start_head] = comp_.window_ms;
+        comp_.start_timestamps[comp_.start_head] = comp_.now_ms;
         comp_.start_head = (comp_.start_head + 1) % CompressorTracker::MAX_STARTS;
         if (comp_.start_count < CompressorTracker::MAX_STARTS) {
             comp_.start_count++;
@@ -624,9 +627,9 @@ void ProtectionModule::update_compressor_tracker(bool compressor_on, float temp,
 int ProtectionModule::count_starts_in_window(uint32_t window_ms) const {
     if (comp_.start_count == 0) return 0;
 
-    uint32_t cutoff = 0;
-    if (comp_.window_ms > window_ms) {
-        cutoff = comp_.window_ms - window_ms;
+    uint64_t cutoff = 0;
+    if (comp_.now_ms > window_ms) {
+        cutoff = comp_.now_ms - window_ms;
     }
 
     int count = 0;
