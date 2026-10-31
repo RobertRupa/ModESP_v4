@@ -19,8 +19,8 @@
     currentPage = id;
   }
 
-  $: currentTitle = $pages.find((p) => p.id === currentPage)?.title || "";
-  $: sortedPages = [...$pages].sort((a, b) => (a.order || 0) - (b.order || 0));
+  $: currentTitle = currentPage === "kc868_io" ? "I/O KC868-A6" : ($pages.find((p) => p.id === currentPage)?.title || "");
+  $: sortedPages = [...$pages, { id: "kc868_io", title: "I/O KC868-A6", icon: "settings", order: 75 }].sort((a, b) => (a.order || 0) - (b.order || 0));
 
   // Mobile bottom tabs: max 4 visible + "More" if > 5 pages
   const MAX_TABS = 4;
