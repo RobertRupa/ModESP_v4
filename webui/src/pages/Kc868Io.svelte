@@ -8,8 +8,40 @@
   let bindings = [];
   let loading = true;
   let error = '';
+  let snapshots = [];
+  let diagnostics = {};
+  let nicknames = {};
+  let refreshing = false;
+
+  function readNames() {
+    try { nicknames = JSON.parse(localStorage.getItem('kc868-io-labels') || '{}'); }
+    catch (_) { nicknames = {}; }
+  }
+
+  function setName(id, value) {
+    nicknames = { ...nicknames, [id]: value.slice(0, 32) };
+    localStorage.setItem('kc868-io-labels', JSON.stringify(nicknames));
+  }
+
+  async function refreshDiagnostics() {
+    refreshing = true;
+    try {
+      const [newState, newBindings] = await Promise.all([
+        apiGet('/api/state'),
+        apiGet('/api/bindings'),
+      ]);
+      diagnostics = newState;
+      bindings = Array.isArray(newBindings.bindings) ? newBindings.bindings : [];
+      snapshots = Object.entries(newState)
+        .filter(([k]) => /wifi|mqtt|uptime|heap|memory|firmware|system|network/i.test(k))
+        .slice(0, 40);
+      error = '';
+    } catch (e) { error = e.message || String(e); }
+    finally { refreshing = false; }
+  }
 
   onMount(async () => {
+    readNames();
     try {
       const data = await apiGet('/api/bindings');
       bindings = Array.isArray(data.bindings) ? data.bindings : [];
@@ -42,6 +74,7 @@
   <header>
     <h2>KC868-A6 · Wejścia i wyjścia</h2>
     <p>Podgląd przypisań sprzętowych z /api/bindings. Stany pojawiają się tylko wtedy, gdy backend publikuje odpowiedni klucz equipment.*.</p>
+    <button type="button" class="refresh" disabled={refreshing} on:click={refreshDiagnostics}>{refreshing ? 'Pobieranie…' : 'Odśwież diagnostykę'}</button>
   </header>
 
   {#if loading}
@@ -57,6 +90,7 @@
             {@const binding = bindingFor(item.id)}
             <div class="io-cell">
               <strong>{item.label}</strong>
+              <input aria-label={`Nazwa ${item.label}`} placeholder="Nazwa kanału" value={nicknames[item.id] || ''} maxlength="32" on:change={(e) => setName(item.id, e.currentTarget.value)} />
               <span>{binding?.role || 'Nieprzypisany'}</span>
               <small>Stan zgłoszony: {formatState(liveValue(binding))}</small>
             </div>
@@ -78,6 +112,19 @@
       </article>
     </div>
   {/if}
+  <article>
+    <h3>System / Sieć / MQTT</h3>
+    <p>Diagnostyka z rzeczywistych kluczy backendu. Brak klucza oznacza brak udostępnionej informacji, a nie awarię urządzenia.</p>
+    {#if snapshots.length === 0}
+      <p>Naciśnij „Odśwież diagnostykę”, aby pobrać dostępne dane.</p>
+    {:else}
+      <div class="diag-grid">
+        {#each snapshots as [key, value]}
+          <div class="diag-item"><small>{key}</small><strong>{formatState(value)}</strong></div>
+        {/each}
+      </div>
+    {/if}
+  </article>
   <footer>
     <p>I²C: GPIO4 SDA / GPIO15 SCL · 100 kHz. Ta strona nie steruje przekaźnikami — kontrolę wyjść zachowują moduły automatyki i zabezpieczeń.</p>
   </footer>
@@ -96,5 +143,9 @@
   span { font-size: 12px; overflow-wrap: anywhere; }
   small { color: var(--text-3); font-size: 11px; }
   .error { color: var(--red); }
+  .refresh { margin-top: 12px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface-2); color: var(--text-1); padding: 10px 15px; cursor: pointer; }
+  input { min-width: 0; width: 100%; padding: 7px; background: var(--bg); color: var(--text-1); border: 1px solid var(--border); border-radius: 6px; }
+  .diag-grid { margin-top: 16px; display: grid; grid-template-columns: repeat(auto-fit,minmax(170px,1fr)); gap: 8px; }
+  .diag-item { background: var(--surface-2); border-radius: 8px; padding: 12px; display: grid; gap: 6px; overflow-wrap: anywhere; }
   @media (max-width: 580px) { .io-grid { grid-template-columns: repeat(2, minmax(0,1fr)); } }
 </style>
