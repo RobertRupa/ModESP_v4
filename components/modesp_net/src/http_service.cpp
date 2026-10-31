@@ -54,6 +54,22 @@ static uint8_t  s_auth_fail_count = 0;
 static uint32_t s_auth_lockout_until = 0;  // xTaskGetTickCount() значення
 
 void HttpService::load_auth_from_nvs() {
+    // One-time recovery for devices locked out after a firmware migration.
+    // Marker is retained in NVS; user changes after recovery are preserved.
+    // Remove this migration block in a subsequent release.
+    bool recovered = false;
+    nvs_helper::read_bool(AUTH_NVS_NS, "kcs_fix_1", recovered);
+    if (!recovered) {
+        const bool ok_user = nvs_helper::write_str(AUTH_NVS_NS, "user", "admin");
+        const bool ok_pass = nvs_helper::write_str(AUTH_NVS_NS, "pass", "modesp");
+        const bool ok_enabled = nvs_helper::write_bool(AUTH_NVS_NS, "enabled", true);
+        if (ok_user && ok_pass && ok_enabled) {
+            nvs_helper::write_bool(AUTH_NVS_NS, "kcs_fix_1", true);
+            ESP_LOGW(TAG, "One-time auth recovery applied: user=admin. Change password in WebUI.");
+        } else {
+            ESP_LOGE(TAG, "One-time auth recovery failed writing NVS");
+        }
+    }
     nvs_helper::read_str(AUTH_NVS_NS, "user", s_auth_user, sizeof(s_auth_user));
     nvs_helper::read_str(AUTH_NVS_NS, "pass", s_auth_pass, sizeof(s_auth_pass));
     bool enabled = true;
@@ -94,7 +110,6 @@ bool HttpService::check_auth(httpd_req_t* req) {
     size_t hdr_len = httpd_req_get_hdr_value_len(req, "Authorization");
     if (hdr_len == 0 || hdr_len > 200) {
         httpd_resp_set_status(req, "401 Unauthorized");
-        httpd_resp_set_hdr(req, "WWW-Authenticate", "Basic realm=\"ModESP\"");
         httpd_resp_set_type(req, "text/plain");
         httpd_resp_send(req, "Unauthorized", HTTPD_RESP_USE_STRLEN);
         return false;
@@ -103,7 +118,6 @@ bool HttpService::check_auth(httpd_req_t* req) {
     char auth_buf[202];
     if (httpd_req_get_hdr_value_str(req, "Authorization", auth_buf, sizeof(auth_buf)) != ESP_OK) {
         httpd_resp_set_status(req, "401 Unauthorized");
-        httpd_resp_set_hdr(req, "WWW-Authenticate", "Basic realm=\"ModESP\"");
         httpd_resp_set_type(req, "text/plain");
         httpd_resp_send(req, "Unauthorized", HTTPD_RESP_USE_STRLEN);
         return false;
@@ -112,7 +126,6 @@ bool HttpService::check_auth(httpd_req_t* req) {
     // Перевіряємо "Basic " prefix
     if (strncmp(auth_buf, "Basic ", 6) != 0) {
         httpd_resp_set_status(req, "401 Unauthorized");
-        httpd_resp_set_hdr(req, "WWW-Authenticate", "Basic realm=\"ModESP\"");
         httpd_resp_set_type(req, "text/plain");
         httpd_resp_send(req, "Unauthorized", HTTPD_RESP_USE_STRLEN);
         return false;
@@ -126,7 +139,6 @@ bool HttpService::check_auth(httpd_req_t* req) {
                                      strlen(auth_buf + 6));
     if (ret != 0 || decoded_len == 0) {
         httpd_resp_set_status(req, "401 Unauthorized");
-        httpd_resp_set_hdr(req, "WWW-Authenticate", "Basic realm=\"ModESP\"");
         httpd_resp_set_type(req, "text/plain");
         httpd_resp_send(req, "Unauthorized", HTTPD_RESP_USE_STRLEN);
         return false;
@@ -137,7 +149,6 @@ bool HttpService::check_auth(httpd_req_t* req) {
     char* colon = strchr((char*)decoded, ':');
     if (!colon) {
         httpd_resp_set_status(req, "401 Unauthorized");
-        httpd_resp_set_hdr(req, "WWW-Authenticate", "Basic realm=\"ModESP\"");
         httpd_resp_set_type(req, "text/plain");
         httpd_resp_send(req, "Unauthorized", HTTPD_RESP_USE_STRLEN);
         return false;
@@ -160,7 +171,6 @@ bool HttpService::check_auth(httpd_req_t* req) {
     }
 
     httpd_resp_set_status(req, "401 Unauthorized");
-    httpd_resp_set_hdr(req, "WWW-Authenticate", "Basic realm=\"ModESP\"");
     httpd_resp_set_type(req, "text/plain");
     httpd_resp_send(req, "Unauthorized", HTTPD_RESP_USE_STRLEN);
     return false;
