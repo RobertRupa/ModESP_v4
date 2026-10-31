@@ -19,6 +19,7 @@
   import Dashboard from "./pages/Dashboard.svelte";
   import DynamicPage from "./pages/DynamicPage.svelte";
   import BindingsEditor from "./pages/BindingsEditor.svelte";
+  import Kc868Io from "./pages/Kc868Io.svelte";
 
   let currentPage = "dashboard";
 
@@ -71,6 +72,8 @@
           <Dashboard />
         {:else if currentPage === "bindings"}
           <BindingsEditor />
+        {:else if currentPage === "kc868_io"}
+          <Kc868Io />
         {:else}
           <DynamicPage pageId={currentPage} />
         {/if}
